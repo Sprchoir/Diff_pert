@@ -1,5 +1,0 @@
-Flask
-requests
-numpy
-pandas
-pytest

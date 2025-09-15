@@ -1,0 +1,33 @@
+data:
+  rna_path: "./data/perturb_processed.h5ad"
+  embedding_path: "data/GenePT_emebdding_v2/GenePT_gene_protein_embedding_model_3_text.pickle."
+  pca: True                   # Whether to use PCA
+  num_pc: 100                 # Number of principal components to use
+  regre: False                # Whether to use regression to fit the embeddings
+  split_ratio: 0.8, 0.1, 0.1  # Ratio of Training/validation/test set
+
+training:
+  batch_size: 64
+  num_workers: 0
+  num_epochs: 500
+  lr: 1e-4
+  weight_decay: 1e-5
+  scheduler: "cosine"
+  device: "cpu"         # "cpu", "cuda"
+  seed: 42              # mainly used for the random pairing, 
+  save_every: 50        # Save the model every n epochs
+
+model:
+  gene_dim: 2000            
+  embedding_dim: 3072   
+  embedding_proj_dim: 512    
+  hidden_dims: [512, 512, 256]   
+  time_emb_dim: 128
+  dropout: 0.1        
+  diffusion_steps: 50       # Number of denoising steps
+
+dir:
+  save_dir: "./Diff_pert/results"
+  checkpoint_dir: "./Diff_pert/results/checkpoints"
+  pred_dir: "./Diff_pert/results/predictions"
+  verbose: True

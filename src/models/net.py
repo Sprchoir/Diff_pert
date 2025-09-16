@@ -20,7 +20,8 @@ class Genet(nn.Module):
         embedding_proj_dim = configs["model"].get("embedding_proj_dim", 512)
         hidden_dims = configs["model"].get("hidden_dims", [512, 512, 256])
         time_emb_dim = configs["model"].get("time_emb_dim", 128)
-        cond_dim = x_dim + embedding_proj_dim + time_emb_dim   # noised_y + x + embedding
+        dropout = configs["model"]["dropout"]
+        cond_dim = x_dim + embedding_proj_dim + time_emb_dim   # x + embedding + time_embedding
 
         # timestep embedding MLP
         self.time_mlp = nn.Sequential(
@@ -31,7 +32,7 @@ class Genet(nn.Module):
 
         # Embedding projection
         self.embedding_proj = nn.Linear(embedding_dim, embedding_proj_dim)
-
+        
         # input layer
         self.input_layer = nn.Linear(x_dim, hidden_dims[0])
 
@@ -39,8 +40,8 @@ class Genet(nn.Module):
         self.mlp_blocks = nn.ModuleList()
         for i in range(len(hidden_dims)-1):
             self.mlp_blocks.append(
-                # conditional residual mechanism
-                ConditionalResidualBlock(hidden_dims[i], hidden_dims[i+1], cond_dim)
+                # conditional residual mechanism 
+                ConditionalResidualBlock(dropout, hidden_dims[i], hidden_dims[i+1], cond_dim)
             )
 
         # output layer
@@ -52,10 +53,10 @@ class Genet(nn.Module):
         t_emb = self.time_mlp(t)
 
         cond = torch.cat([x, emb_proj, t_emb], dim=-1)
-        input = self.input_layer(noised_y)
+        h = self.input_layer(noised_y)
         for block in self.mlp_blocks:
-            output = block(input, cond)
-        out = self.output_layer(output)
+            h = block(h, cond)
+        out = self.output_layer(h)
         return out
     
 if __name__ == '__main__':

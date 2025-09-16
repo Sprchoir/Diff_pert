@@ -2,13 +2,13 @@ import torch
 from torch import nn
 
 class ConditionalResidualBlock(nn.Module):
-    def __init__(self, dim, out_dim, cond_dim):
+    def __init__(self, dropout, dim, out_dim, cond_dim):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(dim + cond_dim, out_dim),
             nn.SiLU(),
-            nn.Linear(out_dim, out_dim)
-            #nn.Dropout(0.1)
+            nn.Linear(out_dim, out_dim),
+            #nn.Dropout(dropout)
         )
         self.res_proj = nn.Linear(dim, out_dim) if dim != out_dim else nn.Identity()
 

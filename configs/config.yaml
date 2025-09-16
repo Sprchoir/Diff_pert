@@ -20,9 +20,9 @@ training:
 model:
   gene_dim: 2000            
   embedding_dim: 3072   
-  embedding_proj_dim: 512    
-  hidden_dims: [512, 512, 256]   
-  time_emb_dim: 128
+  embedding_proj_dim: 256   
+  hidden_dims: [256, 512, 256]   
+  time_emb_dim: 64
   dropout: 0.1        
   diffusion_steps: 50       # Number of denoising steps
 

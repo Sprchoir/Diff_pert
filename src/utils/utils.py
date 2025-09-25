@@ -1,6 +1,5 @@
 import torch
 import scanpy as sc
-import joblib
 import numpy as np
 
 def Load_data(configs):
@@ -44,8 +43,37 @@ def load_checkpoint(model, path, optimizer=None, device=None):
     val_loss = checkpoint.get("val_loss", 0)
     return model, optimizer, epoch, val_loss
 
-def pca_inverse(data, path):
-    """ Reconstruct Perturbed data from the top principal components """
-    pca_model = joblib.load(path)
-    Y = pca_model.inverse_transform(data)
-    return Y
+def MMD(x, y):
+    """
+    Empirical maximum mean discrepancy. The lower the result, the more evidence that distributions are the same.
+    Args:
+        x: one sample, distribution P
+        y: another sample, distribution Q
+        kernel: kernel type such as "multiscale" or "rbf"
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    xx, yy, zz = torch.mm(x, x.t()), torch.mm(y, y.t()), torch.mm(x, y.t())
+    rx = (xx.diag().unsqueeze(0).expand_as(xx))
+    ry = (yy.diag().unsqueeze(0).expand_as(yy))
+    dxx = rx.t() + rx - 2. * xx 
+    dyy = ry.t() + ry - 2. * yy
+    dxy = rx.t() + ry - 2. * zz 
+    XX, YY, XY = (torch.zeros(xx.shape).to(device),
+                  torch.zeros(xx.shape).to(device),
+                  torch.zeros(xx.shape).to(device))
+
+    # Use median trick to get a base bandwidth
+    base = torch.median(dxy.detach())
+    if base.item() <= 0:
+        base = torch.tensor(1.0, device=device)  # fallback
+    # Create multiple bandwidths around the median
+    scales = [0.5, 1, 2, 4, 8]  # you can tune this list
+    bandwidths = [base * s for s in scales]
+    # RBF (Gaussian) kernel
+    # Bandwidths control the "width" of the Gaussian, i.e., how sensitive the kernel is to distances.
+    for a in bandwidths:
+        XX += torch.exp(-0.5*dxx/a)
+        YY += torch.exp(-0.5*dyy/a)
+        XY += torch.exp(-0.5*dxy/a)
+
+    return torch.mean(XX + YY - 2. * XY)

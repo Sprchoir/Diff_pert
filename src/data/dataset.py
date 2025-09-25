@@ -1,8 +1,7 @@
-import re, os, pickle, joblib
+import re, os, pickle
 import torch
 import numpy as np
 import scanpy as sc
-from sklearn.decomposition import PCA
 from torch.utils.data import Dataset
 from ..utils.utils import Load_data
 
@@ -14,7 +13,6 @@ class DiffDataset(Dataset):
         X, Y = Load_data(configs)
         self.X, self.Y = self._split(X, Y)
         self.Preprocessing(configs)
-        # Consider whether to reduce dimensionality of embeddings
     
     def __len__(self):
         return len(self.Y)
@@ -23,10 +21,12 @@ class DiffDataset(Dataset):
         return self.X[idx,:], self.Y[idx,:], self.embeddings[idx,:]
     
     def Preprocessing(self, configs):
+        # Preprocessing and PCA through Scanpy
+        self.sc_process()
+
         # Obtain the perturbation labels
-        self.Y.obs["perturbation"]= self.Y.obs["condition_name"].apply(self.extract_gene_name)
-        # print("Unique perturbations:", adata.obs["perturbation"].unique())
-        # Obtain the embeddings for perturbed genes
+        self.Y.obs["perturbation"] = self.Y.obs["condition_name"].apply(self.extract_gene_name)
+        # print("Unique perturbations:", adata.obs["perturbation"].unique()) # 86 kinds
         pickle_path = configs["data"]["embedding_path"]
         with open(pickle_path, "rb") as f:
             gene_embedding = pickle.load(f)
@@ -34,10 +34,14 @@ class DiffDataset(Dataset):
         emb_list = [gene_embedding[g] for g in perturbs]
         self.embeddings = torch.tensor(np.stack(emb_list), dtype=torch.float32)
 
-        # PCA through Scanpy
-        self.sc_process()
-        self.X = torch.tensor(self.X.copy(), dtype=torch.float32)
-        self.Y = torch.tensor(self.Y.copy(), dtype=torch.float32)
+        if self.configs["data"]["pca"]:
+          self.X = self.X.obsm["X_pca"].copy()
+          self.Y = self.Y.obsm["X_pca"].copy()
+        else:
+          self.X = self.X.X.toarray() if hasattr(self.X.X, "toarray") else self.X.X
+          self.Y = self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X 
+        self.X = torch.tensor(self.X, dtype=torch.float32)
+        self.Y = torch.tensor(self.Y, dtype=torch.float32)
 
     def extract_gene_name(self, condition_name):
         if "ctrl" in condition_name and "+" in condition_name:
@@ -50,34 +54,44 @@ class DiffDataset(Dataset):
     
     def sc_process(self):
         """
-        Preprocess self.X and self.Y through Scanpy
-        - train/val: standard preprocessing + PCA
-        - test: X processed as usual, Y uses train PCA model for projection(under consideration)
+        Preprocess self.X and self.Y through Scanpy:
+        Normalization + Log-transform + HVG filter + PCA
+        To better capture the differences between different cell types, we fit PCA independently on train/val/test set.
+        And a semi-supervised decoder is used to map the PCA embeddings back to the original space.
         """
-        # for data in [self.X, self.Y]:
-        #     sc.pp.normalize_total(data, target_sum=1e4)
-        #     sc.pp.log1p(data)
-        #     sc.pp.highly_variable_genes(data, n_top_genes=5000, subset=True, flavor="seurat")
-        #     sc.pp.scale(data, max_value=10)
+        save_dir = self.configs["dir"]["pred_dir"]
+        hvg_file = os.path.join(save_dir, "hvg_genes.npy")
+        n_comps = self.configs["data"]["num_pc"]
+        norm_sum = self.configs["data"]["norm_sum"]
+        # Scanpy Preprocessing for training set
+        for data in [self.X, self.Y]:
+            sc.pp.normalize_total(data, target_sum=norm_sum)
+            sc.pp.log1p(data)
+        # HVG selection 
+        sc.pp.highly_variable_genes(self.X, n_top_genes=self.configs["data"]["num_HVG"], subset=True, flavor="seurat")
+        hvg_genes = self.X.var_names[self.X.var["highly_variable"]].to_numpy()
+        np.save(hvg_file, hvg_genes)
+        self.Y = self.Y[:, hvg_genes]
+        # Save raw Y for test set
+        if self.split == "test":
+            np.save(
+                os.path.join(save_dir, "Y_target_full.npy"),
+                self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X
+            )
+        # PCA
         if self.configs["data"]["pca"]:
-            n_comps = self.configs["data"]["num_pc"]      
-            pca_model_path = os.path.join(self.configs["dir"]["save_dir"], "pca_Y.pkl")
-
-            if self.split == "train":
-                pca_model = PCA(n_components=n_comps, svd_solver="arpack")
-                self.X = pca_model.fit_transform(self.X.X)
-                self.Y = pca_model.fit_transform(self.Y.X)
-                # Save the PCA model for Y
-                joblib.dump(pca_model, pca_model_path)
-            elif self.split == "val":
-                pca_model = PCA(n_components=n_comps, svd_solver="arpack")
-                self.X = pca_model.fit_transform(self.X.X)
-                self.Y = pca_model.fit_transform(self.Y.X)
-            elif self.split == "test":
-                save_dir = self.configs["dir"]["pred_dir"]
-                np.save(os.path.join(save_dir, "Y_target.npy"), self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X)
-                self.X = PCA(n_components=n_comps, svd_solver="arpack").fit_transform(self.X.X)
-                self.Y = PCA(n_components=n_comps, svd_solver="arpack").fit_transform(self.Y.X)
+            sc.tl.pca(self.X, n_comps=n_comps, use_highly_variable=True, svd_solver="arpack")
+            sc.tl.pca(self.Y, n_comps=n_comps, svd_solver="arpack")
+        # Save top_pc(Y) for test set
+        if self.split == "test":
+            if self.configs["data"]["pca"]:
+              y = self.Y.obsm["X_pca"]
+            else:
+              y = self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X
+            np.save(
+                os.path.join(save_dir, "Y_target_pc.npy"),
+                y
+            )              
 
     def _split(self, X, Y):
         split_ratio = self.configs["data"].get("split", [0.8, 0.1, 0.1])

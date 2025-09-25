@@ -2,7 +2,7 @@ import torch
 import os
 import tqdm
 import numpy as np
-from ..utils.utils import save_checkpoint, pca_inverse, load_checkpoint
+from ..utils.utils import save_checkpoint, load_checkpoint, MMD
 
 class Trainer:
     def __init__(self, configs, model, train_loader, val_loader, test_loader=None):
@@ -14,20 +14,21 @@ class Trainer:
         self.test_loader = test_loader
         self.configs = configs
 
-        # Optimizer & Criterion (Default: Adam & MSELoss)
+        # Optimizer & Criterion (Default: Adam & MMDLoss)
         self.optimizer = torch.optim.Adam(
             model.parameters(),
             lr=float(configs["training"]["lr"]),
             weight_decay=float(configs["training"]["weight_decay"]),
         )
-        self.criterion = torch.nn.MSELoss()
+        # self.criterion = torch.nn.MSELoss()
+        self.criterion = lambda x, y: MMD(x, y) 
 
         # Scheduler (optional)
         self.scheduler = None
-        if configs["training"].get("scheduler", None) == "cosine":
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, T_max=configs["training"]["num_epochs"]
-            )
+        # if configs["training"].get("scheduler", None) == "cosine":
+        #     self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #         self.optimizer, T_max=configs["training"]["num_epochs"]
+        #     )
 
         # Working Directorys
         self.save_dir = configs["dir"]["save_dir"]
@@ -90,19 +91,13 @@ class Trainer:
         all_pred = torch.cat(all_pred, dim=0)
         all_target = torch.cat(all_target, dim=0)
         test_loss = running_loss / len(self.test_loader)
-        print(f"Low-rank Diffusion Test Loss: {test_loss:.4f}")
-        # Inverse PCA transformation
-        pca_model_path = os.path.join(self.configs["dir"]["save_dir"], "pca_Y.pkl")
-        all_pred_reconstructed = pca_inverse(all_pred, pca_model_path)
-
-        all_pred_reconstructed = all_pred_reconstructed.cpu().numpy()
+        print(f"Diffusion Test Loss: {test_loss:.4f}")
         all_pred = all_pred.cpu().numpy()
         all_target = all_target.cpu().numpy()
         save_dir = self.configs["dir"]["pred_dir"]
         os.makedirs(save_dir, exist_ok=True)
         np.savez(
             os.path.join(save_dir, "test_outputs.npz"),
-            pred_target=all_pred_reconstructed,
             pred_pc=all_pred,
             Y_pc=all_target,
         )

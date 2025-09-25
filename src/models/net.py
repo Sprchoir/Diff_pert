@@ -1,6 +1,44 @@
 import torch
 from torch import nn
-from .block import ConditionalResidualBlock
+
+class MLPBlock(nn.Module):
+    def __init__(self, dropout, in_dim, out_dim, x_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim+x_dim, out_dim),
+            nn.SiLU(),
+            nn.LayerNorm(out_dim),
+            # nn.Dropout(dropout) if dropout is not None else nn.Identity()
+        )
+        if in_dim != out_dim:
+            self.shortcut = nn.Linear(in_dim, out_dim)
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, input, cond_emb):
+        input_all = torch.cat([input, cond_emb], dim=-1)
+        # Residual Connection
+        return self.net(input_all) + self.shortcut(input)
+    
+class ConditionMLPBlock(nn.Module):
+    def __init__(self, x_dim, embedding_dim, time_emb_dim):
+        super().__init__()
+        cond_dim = x_dim + embedding_dim + time_emb_dim
+        self.net = nn.Sequential(
+            nn.Linear(cond_dim, 512),
+            nn.SiLU(),
+            nn.Linear(512, x_dim)
+        )
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, time_emb_dim),
+            nn.SiLU()
+        )
+
+    def forward(self, x, time, embedding):
+        # Concatenate condition
+        time_emb = self.time_mlp(time)
+        cond = torch.cat([x, time_emb, embedding], dim=-1)
+        return self.net(cond)
 
 class Genet(nn.Module):
     """
@@ -15,48 +53,37 @@ class Genet(nn.Module):
     """
     def __init__(self, configs):
         super(Genet, self).__init__()
-        x_dim = configs["data"]["num_pc"]
+        if configs["data"]["pca"]:
+          x_dim = configs["data"]["num_pc"]
+        else:
+          x_dim = configs["data"]["num_HVG"]
         embedding_dim = configs["model"]["embedding_dim"]
-        embedding_proj_dim = configs["model"].get("embedding_proj_dim", 512)
         hidden_dims = configs["model"].get("hidden_dims", [512, 512, 256])
         time_emb_dim = configs["model"].get("time_emb_dim", 128)
         dropout = configs["model"]["dropout"]
-        cond_dim = x_dim + embedding_proj_dim + time_emb_dim   # x + embedding + time_embedding
-
-        # timestep embedding MLP
-        self.time_mlp = nn.Sequential(
-            nn.Linear(1, time_emb_dim),
-            nn.SiLU(),
-            nn.Linear(time_emb_dim, time_emb_dim)
-        )
-
-        # Embedding projection
-        self.embedding_proj = nn.Linear(embedding_dim, embedding_proj_dim)
         
-        # input layer
-        self.input_layer = nn.Linear(x_dim, hidden_dims[0])
+        # Condition MLP
+        self.condition_mlp = ConditionMLPBlock(x_dim, embedding_dim, time_emb_dim)
 
-        # MLP blocks
+        # Main MLP Structure
         self.mlp_blocks = nn.ModuleList()
-        for i in range(len(hidden_dims)-1):
+        dim = x_dim
+        for i in range(len(hidden_dims)):
             self.mlp_blocks.append(
-                # conditional residual mechanism 
-                ConditionalResidualBlock(dropout, hidden_dims[i], hidden_dims[i+1], cond_dim)
+                MLPBlock(dropout, dim, hidden_dims[i], x_dim)
             )
+            dim = hidden_dims[i]
 
-        # output layer
-        self.output_layer = nn.Linear(hidden_dims[-1], x_dim)
+        # Output layer
+        self.out_layer = nn.Linear(hidden_dims[-1], x_dim)
 
     def forward(self, noised_y, x, embeddings, timesteps):
-        emb_proj = self.embedding_proj(embeddings)
         t = timesteps.float().unsqueeze(-1)
-        t_emb = self.time_mlp(t)
-
-        cond = torch.cat([x, emb_proj, t_emb], dim=-1)
-        h = self.input_layer(noised_y)
+        cond_emb = self.condition_mlp(x, t, embeddings)
+        h = noised_y
         for block in self.mlp_blocks:
-            h = block(h, cond)
-        out = self.output_layer(h)
+            h = block(h, cond_emb)
+        out = self.out_layer(h)
         return out
     
 if __name__ == '__main__':

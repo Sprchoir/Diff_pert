@@ -14,17 +14,17 @@ class DiffusionModel(nn.Module):
         self.device = configs["training"]["device"]
         self.diffsteps = configs["model"]["diffusion_steps"]
         self.batch_size = configs["training"]["batch_size"]
-        self.net = Genet(configs).to(self.device)
+        self.net = Genet(configs)
         # DDPM/ DDIM scheduler
-        self.ddpm_scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule='scaled_linear')
+        self.ddpm_scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule='scaled_linear', timestep_spacing="trailing")
         self.ddim_scheduler = DDIMScheduler(num_train_timesteps=self.diffsteps, beta_schedule='scaled_linear', timestep_spacing="trailing")
 
     def forward(self, x, y, embeddings):
-        noise = torch.randn_like(y)    # Random Gaussian noise
-        timesteps = torch.linspace(0,999, self.batch_size).long().to(self.device)
+        noise = torch.randn_like(y) # Random Gaussian noise
+        timesteps = torch.randint(0, self.ddpm_scheduler.config.num_train_timesteps, (y.shape[0],), device=self.device).long()
         noised = self.ddpm_scheduler.add_noise(y, noise, timesteps)  # Add noise
-        pred = self.net(noised, x, embeddings, timesteps)
-        return pred, noise
+        noise_pred = self.net(noised, x, embeddings, timesteps)
+        return noise_pred, noise
 
     def reverse(self, x, embeddings):
         x = x.to(self.device).float()

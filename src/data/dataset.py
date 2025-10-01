@@ -1,18 +1,20 @@
-import re, os, pickle
+import re, os, pickle, joblib
 import torch
 import numpy as np
 import scanpy as sc
+from scipy.sparse import issparse
 from torch.utils.data import Dataset
 from ..utils.utils import Load_data
 
 class DiffDataset(Dataset):
     def __init__(self, configs, split):
-        super(DiffDataset, self).__init__()
         self.configs = configs
         self.split = split
         X, Y = Load_data(configs)
         self.X, self.Y = self._split(X, Y)
         self.Preprocessing(configs)
+        if split == "test":
+          self.save_ori()
     
     def __len__(self):
         return len(self.Y)
@@ -21,6 +23,10 @@ class DiffDataset(Dataset):
         return self.X[idx,:], self.Y[idx,:], self.embeddings[idx,:]
     
     def Preprocessing(self, configs):
+        if self.split == "test":
+          self.X_ori = self.X.copy()
+          self.Y_ori = self.Y.copy()
+
         # Preprocessing and PCA through Scanpy
         self.sc_process()
 
@@ -35,6 +41,7 @@ class DiffDataset(Dataset):
         self.embeddings = torch.tensor(np.stack(emb_list), dtype=torch.float32)
 
         if self.configs["data"]["pca"]:
+          self.Y_full = self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X 
           self.X = self.X.obsm["X_pca"].copy()
           self.Y = self.Y.obsm["X_pca"].copy()
         else:
@@ -52,59 +59,81 @@ class DiffDataset(Dataset):
             return "ctrl"
         return condition_name 
     
+    def save_ori(self):
+        X_ori = self.X_ori[:, self.hvg_genes]
+        Y_ori = self.Y_ori[:, self.hvg_genes]
+        X_ori = X_ori.X.toarray() if hasattr(X_ori.X, "toarray") else X_ori.X
+        Y_ori = Y_ori.X.toarray() if hasattr(Y_ori.X, "toarray") else Y_ori.X
+        np.savez(
+            os.path.join(self.configs["dir"]["pred_dir"], "XY_ori.npz"),
+            X_ori=X_ori,
+            Y_ori=Y_ori
+        )
+
     def sc_process(self):
         """
         Preprocess self.X and self.Y through Scanpy:
         Normalization + Log-transform + HVG filter + PCA
         To better capture the differences between different cell types, we fit PCA independently on train/val/test set.
-        And a semi-supervised decoder is used to map the PCA embeddings back to the original space.
+        And a semi-supervised decoder will be used to map the PC data embeddings back to the original space.
         """
         save_dir = self.configs["dir"]["pred_dir"]
-        hvg_file = os.path.join(save_dir, "hvg_genes.npy")
+        stats_file = os.path.join(save_dir, f"stats.pkl")
         n_comps = self.configs["data"]["num_pc"]
         norm_sum = self.configs["data"]["norm_sum"]
         # Scanpy Preprocessing for training set
+        self.X.obs["lib_size_raw"] = self.X.X.sum(axis=1).A1 if hasattr(self.X.X, "A1") else self.X.X.sum(axis=1)
+        self.Y.obs["lib_size_raw"] = self.Y.X.sum(axis=1).A1 if hasattr(self.Y.X, "A1") else self.Y.X.sum(axis=1)
         for data in [self.X, self.Y]:
             sc.pp.normalize_total(data, target_sum=norm_sum)
             sc.pp.log1p(data)
         # HVG selection 
-        sc.pp.highly_variable_genes(self.X, n_top_genes=self.configs["data"]["num_HVG"], subset=True, flavor="seurat")
-        hvg_genes = self.X.var_names[self.X.var["highly_variable"]].to_numpy()
-        np.save(hvg_file, hvg_genes)
-        self.Y = self.Y[:, hvg_genes]
-        # Save raw Y for test set
-        if self.split == "test":
-            np.save(
-                os.path.join(save_dir, "Y_target_full.npy"),
-                self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X
-            )
+        # If for different cells or genes, we need to independent select HVG as well.
+        # And use the Gene embedding to better represent the cell-gene expression.
+        if self.split == "train":
+            sc.pp.highly_variable_genes(self.X, n_top_genes=self.configs["data"]["num_HVG"], subset=True, flavor="seurat")
+            self.hvg_genes = self.X.var_names[self.X.var["highly_variable"]].to_numpy()
+            self.X = self.X[:, self.hvg_genes]
+            self.Y = self.Y[:, self.hvg_genes]
+        else:
+            self.hvg_genes = joblib.load(stats_file)["hvg_genes"]
+            self.X = self.X[:, self.hvg_genes]
+            self.Y = self.Y[:, self.hvg_genes]
+        # Scale
+        # for data in [self.X, self.Y]:
+        #     sc.pp.scale(data, max_value=10)
         # PCA
         if self.configs["data"]["pca"]:
-            sc.tl.pca(self.X, n_comps=n_comps, use_highly_variable=True, svd_solver="arpack")
+            sc.tl.pca(self.X, n_comps=n_comps, svd_solver="arpack")
             sc.tl.pca(self.Y, n_comps=n_comps, svd_solver="arpack")
-        # Save top_pc(Y) for test set
-        if self.split == "test":
-            if self.configs["data"]["pca"]:
-              y = self.Y.obsm["X_pca"]
-            else:
-              y = self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X
-            np.save(
-                os.path.join(save_dir, "Y_target_pc.npy"),
-                y
-            )              
+
+        # Save the Statistics for the inversion
+        stats = {
+            "lib_size_raw_X": self.X.obs["lib_size_raw"].to_numpy(),
+            "lib_size_raw_Y": self.Y.obs["lib_size_raw"].to_numpy(),
+            "mean_X": self.X.var["mean"].to_numpy() if "mean" in self.X.var else None,
+            "std_X": self.X.var["std"].to_numpy() if "std" in self.X.var else None,
+            "mean_Y": self.Y.var["mean"].to_numpy() if "mean" in self.Y.var else None,
+            "std_Y": self.Y.var["std"].to_numpy() if "std" in self.Y.var else None,
+            "hvg_genes": self.hvg_genes,
+            "norm_sum": norm_sum,
+        }
+        joblib.dump(stats, stats_file)             
 
     def _split(self, X, Y):
         split_ratio = self.configs["data"].get("split", [0.8, 0.1, 0.1])
         n_total = len(Y)
         n_train = int(n_total * split_ratio[0])
-        n_val   = int(n_total * split_ratio[1])
+        n_val = int(n_total * split_ratio[1])
 
         if self.split == "train":
             return X[:n_train], Y[:n_train]
         elif self.split == "val":
             return X[n_train:n_train+n_val], Y[n_train:n_train+n_val]
-        else:
+        elif self.split == "test":
             return X[n_train+n_val:], Y[n_train+n_val:]
+        elif self.split == "generate":
+            return X[:n_train+n_val], Y[:n_train+n_val]
         
 if __name__ == '__main__':
     pass

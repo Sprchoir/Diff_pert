@@ -20,7 +20,6 @@ def Load_data(configs):
     shuffle_idx = np.random.permutation(n_total)
     X = X[shuffle_idx]
     Y = Y[shuffle_idx]
-
     return X, Y
 
 def save_checkpoint(model, path, epoch, optimizer=None, val_loss=None):
@@ -35,7 +34,7 @@ def save_checkpoint(model, path, epoch, optimizer=None, val_loss=None):
     torch.save(state, path)
 
 def load_checkpoint(model, path, optimizer=None, device=None):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
     if optimizer and "optimizer_state" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state"])
@@ -43,37 +42,30 @@ def load_checkpoint(model, path, optimizer=None, device=None):
     val_loss = checkpoint.get("val_loss", 0)
     return model, optimizer, epoch, val_loss
 
-def MMD(x, y):
-    """
-    Empirical maximum mean discrepancy. The lower the result, the more evidence that distributions are the same.
-    Args:
-        x: one sample, distribution P
-        y: another sample, distribution Q
-        kernel: kernel type such as "multiscale" or "rbf"
-    """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    xx, yy, zz = torch.mm(x, x.t()), torch.mm(y, y.t()), torch.mm(x, y.t())
-    rx = (xx.diag().unsqueeze(0).expand_as(xx))
-    ry = (yy.diag().unsqueeze(0).expand_as(yy))
-    dxx = rx.t() + rx - 2. * xx 
-    dyy = ry.t() + ry - 2. * yy
-    dxy = rx.t() + ry - 2. * zz 
-    XX, YY, XY = (torch.zeros(xx.shape).to(device),
-                  torch.zeros(xx.shape).to(device),
-                  torch.zeros(xx.shape).to(device))
+def get_data_decoder(gen_times, configs, split):
+    from src.models.diffusion import DiffusionModel
+    from src.data.dataset import DiffDataset
+    from torch.utils.data import DataLoader
+    from src.training.solver import Trainer
+    if split == "train":
+        dataset = DiffDataset(configs, split="generate")
+    else:
+        dataset = DiffDataset(configs, split="test")
+    batch_size = configs["training"].get("batch_size", 64)
+    num_workers = configs["training"].get("num_workers", 0)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=True)
+    model = DiffusionModel(configs)
+    trainer = Trainer(configs, model, test_loader=dataloader)
+    print("Generating low-rank pc data for decoder training...")
+    Y_low_gen = []
+    for i in range(gen_times):
+        print(f"Generation round {i+1}/{gen_times}")
+        Y_low_gen.append(trainer.generate())
+    Y_low_gen = torch.cat(Y_low_gen, dim=0)
+    print("Generation done!")
 
-    # Use median trick to get a base bandwidth
-    base = torch.median(dxy.detach())
-    if base.item() <= 0:
-        base = torch.tensor(1.0, device=device)  # fallback
-    # Create multiple bandwidths around the median
-    scales = [0.5, 1, 2, 4, 8]  # you can tune this list
-    bandwidths = [base * s for s in scales]
-    # RBF (Gaussian) kernel
-    # Bandwidths control the "width" of the Gaussian, i.e., how sensitive the kernel is to distances.
-    for a in bandwidths:
-        XX += torch.exp(-0.5*dxx/a)
-        YY += torch.exp(-0.5*dyy/a)
-        XY += torch.exp(-0.5*dxy/a)
-
-    return torch.mean(XX + YY - 2. * XY)
+    if split == "train":
+        return Y_low_gen.numpy(), dataset.Y_full, dataset.Y
+    else:
+        return Y_low_gen.numpy(), dataset.Y_full
+        

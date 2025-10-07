@@ -21,11 +21,11 @@ training:
 
 decoder:
   batch_size: 64
-  num_epochs: 100
+  num_epochs: 60
   lr: 1e-4
   weight_decay: 1e-4
   gen_times: 3            # Times to generate low-rank pc data as training dataset for decoder
-  l1_lambda: 1e-5         # Weight for L1 regularization
+  l1_lambda: 5e-3         # Weight for L1 regularization
   dropout: 0.1
   tiny_threshold: 1e-2    # decoder output with values below this will be set to zero
   hidden_dims: [128, 256, 512]  # Hidden dimensions for the decoder MLP
@@ -36,7 +36,7 @@ model:
   hidden_dims: [512, 512, 256] 
   time_emb_dim: 1024
   dropout: 0.1        
-  diffusion_steps: 100       # Number of denoising steps
+  diffusion_steps: 1000       # Number of denoising steps
 
 dir:
   save_dir: "./results"

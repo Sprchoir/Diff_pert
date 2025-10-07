@@ -20,7 +20,8 @@ This diffusion model generates Y conditioned on X and Emb.
 I've constrcuted the whole pipeline of the model on the whole Adamson dataset and adjusted some model settings.
 
 Here is the model performance for the whole model:
-The overall MSE is about 0.1 and MSE for top 20 DE is about 0.6, Pearson R^2 is about 0.07.
+The overall MSE is about 0.1 and MSE for top 20 DE is about 0.55, Pearson R^2 is about 0.07.
+The low-rank diffusion MSE is about 0.05.
 
 
 

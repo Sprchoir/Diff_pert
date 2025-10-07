@@ -2,8 +2,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 from scipy.stats import pearsonr
+from geomloss import SamplesLoss
 
-def MMD(x, y):
+def MMD_energy(x, y):
+    loss = SamplesLoss("energy", p=2)
+    return loss(x, y)
+
+def MMD_Gaussian(x, y):
     """
     Empirical maximum mean discrepancy. The lower the result, the more evidence that distributions are the same.
     """
@@ -68,7 +73,7 @@ def mse_top_DE_genes(X, Y_true, Y_pred, top_k=20):
     criterion = nn.MSELoss()
     return criterion(Y_pred_sel, Y_true_sel).item()
 
-def decoder_loss(y_pred, y_true, l1_lambda=1e-5, axis_lambda=0.1):
+def decoder_loss(y_pred, y_true, l1_lambda=1e-3):
     """
     loss_mse: overall MSE loss
     loss_l1: control the sparsity
@@ -84,5 +89,5 @@ def decoder_loss(y_pred, y_true, l1_lambda=1e-5, axis_lambda=0.1):
     loss_bi_axis = cell_var + gene_var
 
     # total loss
-    loss = loss_mse + l1_lambda * loss_l1 + axis_lambda * loss_bi_axis
+    loss = loss_mse + l1_lambda * loss_l1 + loss_bi_axis
     return loss

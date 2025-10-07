@@ -3,7 +3,7 @@ import os
 import tqdm
 import numpy as np
 from ..utils.utils import save_checkpoint, load_checkpoint
-from ..utils.metrics import mse_all_genes, MMD
+from ..utils.metrics import mse_all_genes, MMD_energy
 
 class Trainer:
     def __init__(self, configs, model, train_loader=None, val_loader=None, test_loader=None):
@@ -21,8 +21,8 @@ class Trainer:
             lr=float(configs["training"]["lr"]),
             weight_decay=float(configs["training"]["weight_decay"]),
         )
-        #self.criterion = lambda x, y: 0.5 * MMD(x, y) + 0.5 * mse_loss(x, y)
-        self.criterion = lambda x, y: MMD(x, y) 
+        #self.criterion = lambda x, y: 0.5 * MMD_energy(x, y) + 0.5 * mse_loss(x, y)
+        self.criterion = lambda x, y: MMD_energy(x, y) 
 
         # Scheduler (optional)
         self.scheduler = None
@@ -89,14 +89,15 @@ class Trainer:
             all_pred.append(y_pred.cpu())
             all_target.append(y.cpu())
 
+        print(x.device, embedding.device, self.model.net.out_layer.weight.device)
         all_pred = torch.cat(all_pred, dim=0)
         all_target = torch.cat(all_target, dim=0)
         test_loss = running_loss / len(self.test_loader)
-        print(f"Diffusion Test Loss: {test_loss:.4f}")
+        print(f"\nDiffusion Test Loss: {test_loss:.4f}")
         Y_true = all_target.numpy()
         Y_pred = all_pred.numpy()
         mse_all = mse_all_genes(torch.tensor(Y_true), torch.tensor(Y_pred))
-        print(f"MSE (overall): {mse_all:.4f}")
+        print(f"\nMSE (overall): {mse_all:.4f}")
 
         save_dir = self.configs["dir"]["pred_dir"]
         os.makedirs(save_dir, exist_ok=True)

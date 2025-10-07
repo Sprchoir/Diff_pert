@@ -1,6 +1,7 @@
 import torch
 import scanpy as sc
 import numpy as np
+import os
 
 def Load_data(configs):
     adata = sc.read_h5ad(configs["data"]["rna_path"])

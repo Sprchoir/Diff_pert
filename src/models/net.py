@@ -5,9 +5,9 @@ class MLPBlock(nn.Module):
     def __init__(self, dropout, in_dim, out_dim, x_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(in_dim+x_dim, out_dim),
+            nn.LayerNorm(in_dim + x_dim),
+            nn.Linear(in_dim + x_dim, out_dim),
             nn.SiLU(),
-            nn.LayerNorm(out_dim),
             # nn.Dropout(dropout) if dropout is not None else nn.Identity()
         )
         if in_dim != out_dim:
@@ -27,10 +27,13 @@ class ConditionMLPBlock(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(cond_dim, 512),
             nn.SiLU(),
-            nn.Linear(512, x_dim)
+            nn.Linear(512, x_dim),
+            nn.LayerNorm(x_dim),
+            nn.SiLU()
         )
         self.time_mlp = nn.Sequential(
             nn.Linear(1, time_emb_dim),
+            nn.LayerNorm(time_emb_dim),
             nn.SiLU()
         )
 

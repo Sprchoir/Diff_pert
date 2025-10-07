@@ -2,7 +2,6 @@ import re, os, pickle, joblib
 import torch
 import numpy as np
 import scanpy as sc
-from scipy.sparse import issparse
 from torch.utils.data import Dataset
 from ..utils.utils import Load_data
 
@@ -26,7 +25,11 @@ class DiffDataset(Dataset):
         if self.split == "test":
           self.X_ori = self.X.copy()
           self.Y_ori = self.Y.copy()
-
+        
+        # Target for the decoder: log1p data
+        self.Y_full = self.Y.copy()
+        sc.pp.log1p(self.Y_full)
+    
         # Preprocessing and PCA through Scanpy
         self.sc_process()
 
@@ -41,7 +44,6 @@ class DiffDataset(Dataset):
         self.embeddings = torch.tensor(np.stack(emb_list), dtype=torch.float32)
 
         if self.configs["data"]["pca"]:
-          self.Y_full = self.Y.X.toarray() if hasattr(self.Y.X, "toarray") else self.Y.X 
           self.X = self.X.obsm["X_pca"].copy()
           self.Y = self.Y.obsm["X_pca"].copy()
         else:
@@ -93,12 +95,12 @@ class DiffDataset(Dataset):
         if self.split == "train":
             sc.pp.highly_variable_genes(self.X, n_top_genes=self.configs["data"]["num_HVG"], subset=True, flavor="seurat")
             self.hvg_genes = self.X.var_names[self.X.var["highly_variable"]].to_numpy()
-            self.X = self.X[:, self.hvg_genes]
-            self.Y = self.Y[:, self.hvg_genes]
         else:
             self.hvg_genes = joblib.load(stats_file)["hvg_genes"]
-            self.X = self.X[:, self.hvg_genes]
-            self.Y = self.Y[:, self.hvg_genes]
+        self.X = self.X[:, self.hvg_genes]
+        self.Y = self.Y[:, self.hvg_genes]
+        self.Y_full = self.Y_full[:, self.hvg_genes]
+        self.Y_full = self.Y_full.X.toarray() if hasattr(self.Y_full.X, "toarray") else self.Y_full.X
         # Scale
         # for data in [self.X, self.Y]:
         #     sc.pp.scale(data, max_value=10)

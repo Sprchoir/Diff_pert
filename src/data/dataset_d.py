@@ -1,7 +1,6 @@
 import torch
 from torch.utils.data import Dataset
 import numpy as np
-import os
 
 class DecoderDataset(Dataset):
     """
@@ -35,7 +34,9 @@ class DecoderDataset(Dataset):
     
     def pair(self):
         # Pair the generated low-dim data with real full-dim data.
-        assert self.Y_low_real.shape[0] == self.Y_full.shape[0], "Number of real low-dim and full-dim data points must be the same."
+        x = self.Y_low_gen.shape[0]
+        self.Y_low_real = self.Y_low_real[:x, :]
+        self.Y_full = self.Y_full[:x, :]
         self.Y_low = torch.cat([self.Y_low_real, self.Y_low_gen], dim=0)
         self.Y_full = torch.cat([self.Y_full, self.Y_full.repeat((self.n_gen, 1))], dim=0)
     

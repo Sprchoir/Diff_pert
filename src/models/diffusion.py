@@ -20,6 +20,9 @@ class DiffusionModel(nn.Module):
         self.ddim_scheduler = DDIMScheduler(num_train_timesteps=self.diffsteps, beta_schedule='scaled_linear', timestep_spacing="trailing")
 
     def forward(self, x, y, embeddings):
+        x = x.to(self.device)
+        y = y.to(self.device)
+        embeddings = embeddings.to(self.device)
         noise = torch.randn_like(y) # Random Gaussian noise
         timesteps = torch.randint(0, self.ddpm_scheduler.config.num_train_timesteps, (y.shape[0],), device=self.device).long()
         noised = self.ddpm_scheduler.add_noise(y, noise, timesteps)  # Add noise

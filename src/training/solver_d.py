@@ -47,12 +47,13 @@ class DecoderTrainer:
     def train_epoch(self, epoch):
         self.model.train()
         running_loss = 0.0
+        l1_lambda = float(self.configs["decoder"]["l1_lambda"])
         for Y_low, Y_full in tqdm.tqdm(self.train_loader, desc=f"Train {epoch}"):
             Y_low = Y_low.to(self.device)
             Y_full = Y_full.to(self.device)
 
             Y_pred = self.model(Y_low)
-            loss = decoder_loss(Y_pred, Y_full)
+            loss = decoder_loss(Y_pred, Y_full, l1_lambda)
             self.optimizer.zero_grad()
             loss.backward()
             # Gradient clipping
@@ -129,7 +130,7 @@ class DecoderTrainer:
         Y = all_pred
         # Y = all_pred * stats["std_Y"] + stats["mean_Y"]
         Y = np.expm1(Y)
-        Y = Y / stats["norm_sum"] * stats["lib_size_raw_Y"][:Y.shape[0]][:, None]
+        # Y = Y / stats["norm_sum"] * stats["lib_size_raw_Y"][:Y.shape[0]][:, None]
         Y_pred = np.where(Y < self.tiny_threshold, np.zeros_like(Y), Y)
         
         # Metrics
@@ -139,7 +140,7 @@ class DecoderTrainer:
         r2 = pearson_r2_after_control(X, Y_true, Y_pred)
         mse_overall = mse_all_genes(Y_true, Y_pred)
         mse_topDE = mse_top_DE_genes(X, Y_true, Y_pred)
-        print(f"Whole Pipeline Metric\n Overall MSE:{mse_overall} | Top 20 DE MSE:{mse_topDE} | Pearson Correlation:{r2}.")
+        print(f"Overall MSE:{mse_overall} | Top 20 DE MSE:{mse_topDE} | Pearson Correlation:{r2}.")
         np.savez(
             os.path.join(save_dir, "Final_outputs.npz"),
             pred = Y_pred,

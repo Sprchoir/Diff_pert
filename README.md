@@ -22,7 +22,11 @@ Cell Representation(how to take advantage of the gene embeddings) and decoder ne
 
 Here is the model performance for the whole model:
 The overall MSE is about 0.1.
+<<<<<<< HEAD
 The low-rank diffusion MSE is about 0.05.
 
 
 
+=======
+The low-rank diffusion MSE is about 0.05.
+>>>>>>> 1a189b6 (Regularization with Lasso)

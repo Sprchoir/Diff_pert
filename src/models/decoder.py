@@ -8,8 +8,8 @@ class DecoderBlock(nn.Module):
         self.fc = nn.Sequential(
             nn.LayerNorm(in_dim),
             nn.Linear(in_dim, out_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+            nn.GELU(),
+            nn.Dropout(dropout)
         )
         if in_dim != out_dim:
             self.shortcut = nn.Linear(in_dim, out_dim)
@@ -21,7 +21,8 @@ class DecoderBlock(nn.Module):
             nn.init.kaiming_uniform_(self.shortcut.weight, nonlinearity="linear")
 
     def forward(self, x):
-        return self.fc(x) + self.shortcut(x)
+        out = self.fc(x) + self.shortcut(x)
+        return nn.functional.layer_norm(out, out.shape[-1:])
 
 class DecoderNet(nn.Module):
     def __init__(self, configs):
@@ -31,6 +32,15 @@ class DecoderNet(nn.Module):
         gene_dim = configs["data"]["num_HVG"]
         num_pc = configs["data"]["num_pc"]
         hidden_dims = configs["decoder"]["hidden_dims"]
+        emb_dim = configs["model"]["embedding_dim"]
+
+        # self.emb = nn.Sequential(
+        #     nn.Linear(emb_dim, gene_dim),
+        #     nn.SiLU(),
+        #     nn.Linear(gene_dim, gene_dim//4),
+        #     nn.LayerNorm(gene_dim//4),
+        #     nn.SiLU()
+        # )
 
         # MLP blocks
         layers = []
@@ -44,13 +54,10 @@ class DecoderNet(nn.Module):
         self.head = nn.Linear(in_dim, gene_dim)
         nn.init.kaiming_uniform_(self.head.weight, nonlinearity="linear")
 
-        # Non-negative output activation
-        self.out_act = nn.Softplus(beta=1.0)
-
     def forward(self, Y_low):
         h = Y_low
         for blk in self.blocks:
             h = blk(h)
-        out = self.head(h)           # (B, G)
-        out = self.out_act(out)      # >= 0
+        out = self.head(h)  # (B, G)
         return out
+

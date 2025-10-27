@@ -1,7 +1,7 @@
 import torch
 import scanpy as sc
 import numpy as np
-import os
+import joblib
 
 def Load_data(configs):
     adata = sc.read_h5ad(configs["data"]["rna_path"])
@@ -48,6 +48,7 @@ def get_data_decoder(gen_times, configs, split):
     from src.data.dataset import DiffDataset
     from torch.utils.data import DataLoader
     from src.training.solver import Trainer
+    # Generate low-rank data from Diffusion model for Decoder training
     if split == "train":
         dataset = DiffDataset(configs, split="generate")
     else:
@@ -57,6 +58,7 @@ def get_data_decoder(gen_times, configs, split):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=True)
     model = DiffusionModel(configs)
     trainer = Trainer(configs, model, test_loader=dataloader)
+
     print("Generating low-rank pc data for decoder training...")
     Y_low_gen = []
     for i in range(gen_times):
@@ -66,7 +68,24 @@ def get_data_decoder(gen_times, configs, split):
     print("Generation done!")
 
     if split == "train":
-        return Y_low_gen.numpy(), dataset.Y_full, dataset.Y
+        return Y_low_gen.numpy(), dataset.Y_full, dataset.Y, dataset.embeddings
     else:
-        return Y_low_gen.numpy(), dataset.Y_full
-        
+        return Y_low_gen.numpy(), dataset.Y_full, dataset.embeddings
+
+def inverse_transform(data, stats_file, idx, split, split_ratio=(0.8, 0.1, 0.1)):
+    stats = joblib.load(stats_file)
+    n_total = len(stats["lib_size_raw"])
+    n_train = int(n_total * (split_ratio[0] + split_ratio[2])) 
+    n_val = int(n_total * split_ratio[1])
+    if split == "val":
+      idx = idx + n_train
+    # Log-transform inversion
+    data = torch.expm1(data)
+    # Normalization inversion
+    lib_size_raw_batch = torch.tensor(
+        np.array(stats["lib_size_raw"])[idx],
+        dtype=data.dtype,
+        device=data.device
+    )
+    data = data * lib_size_raw_batch / stats["norm_sum"]
+    return data

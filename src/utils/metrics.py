@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from scipy.stats import pearsonr
 from geomloss import SamplesLoss
 
 def MMD_energy(x, y):
@@ -40,18 +39,24 @@ def MMD_Gaussian(x, y):
     return torch.mean(XX + YY - 2. * XY)
 
 def pearson_r2_after_control(X, Y_true, Y_pred):
-    # R^2 after subtracting mean control
+    # 1. Subtract control mean
     control_mean = np.mean(X, axis=0)
     Y_true_adj = Y_true - control_mean
     Y_pred_adj = Y_pred - control_mean
-    
-    # Pearson R^2 for each cell and average
+    # 2. Pearson R² for each gene
     r2_list = []
-    for c in range(Y_true.shape[0]): 
-        r, _ = pearsonr(Y_true_adj[c, :], Y_pred_adj[c, :])
-        if not np.isnan(r):
-            r2_list.append(r**2)
-    return np.mean(r2_list) if r2_list else np.nan
+    for i in range(Y_true_adj.shape[1]):
+        y_t = Y_true_adj[:, i]
+        y_p = Y_pred_adj[:, i]
+        if np.std(y_t) == 0 or np.std(y_p) == 0:
+            continue
+        r = np.corrcoef(y_t, y_p)[0, 1]
+        if np.isnan(r):
+            continue
+        r2_list.append(r ** 2)
+    # 3. Take average
+    mean_r2 = np.mean(r2_list) if len(r2_list) > 0 else 0.0
+    return mean_r2
 
 def mse_all_genes(Y_true, Y_pred):
     # MSE over all genes and samples
@@ -73,21 +78,20 @@ def mse_top_DE_genes(X, Y_true, Y_pred, top_k=20):
     criterion = nn.MSELoss()
     return criterion(Y_pred_sel, Y_true_sel).item()
 
-def decoder_loss(y_pred, y_true, l1_lambda=1e-3):
+def decoder_loss(y_pred, y_true):
     """
-    loss_mse: overall MSE loss
-    loss_l1: control the sparsity
+    loss_overall: overall MSE
     loss_bi_axis: MSE loss across both cells and genes
     """
-    loss_mse = nn.functional.mse_loss(y_pred, y_true)
-    loss_l1 = y_pred.abs().mean()
-
     # axis 1: mse loss across genes
-    cell_var = (y_pred - y_true).var(dim=1).mean()
+    mse_across_genes = torch.mean(torch.mean((y_true - y_pred) ** 2, dim=0))
     # axis 2: mse loss across cells
-    gene_var = (y_pred - y_true).var(dim=0).mean()
-    loss_bi_axis = cell_var + gene_var
+    mse_across_cells = torch.mean(torch.mean((y_true - y_pred) ** 2, dim=1))
+    loss_bi_axis = mse_across_cells + mse_across_genes
+
+    # overall MSE
+    loss_overall = nn.functional.mse_loss(y_true, y_pred)
 
     # total loss
-    loss = loss_mse + l1_lambda * loss_l1 + loss_bi_axis
+    loss = loss_bi_axis + loss_overall
     return loss

@@ -5,7 +5,7 @@ data:
   num_pc: 100                   # Number of principal components to use
   regre: False                  # Whether to use regression to fit the embeddings
   split_ratio: [0.8, 0.1, 0.1]  # Ratio of Training/validation/test set
-  norm_sum: 400                 # Normalization factor for Scanpy preprocessing
+  norm_sum: 200                 # Normalization factor for Scanpy preprocessing
   num_HVG: 1000                 # Number of highly variable genes to use
 
 training:
@@ -17,15 +17,15 @@ training:
   scheduler: "cosine"
   device: "cuda"             # "cpu", "cuda"
   seed: 24                   # mainly used for the random pairing,
-  save_every: 20             # Save the model every n epochs
+  save_every: 10             # Save the model every n epochs
 
 decoder:
   batch_size: 64
-  num_epochs: 60
+  num_epochs: 20
   lr: 1e-4
   weight_decay: 1e-4
   gen_times: 3            # Times to generate low-rank pc data as training dataset for decoder
-  l1_lambda: 5e-3         # Weight for L1 regularization
+  l1_lambda: 1e-2         # Weight for L1 regularization
   dropout: 0.1
   tiny_threshold: 1e-2    # decoder output with values below this will be set to zero
   hidden_dims: [128, 256, 512]  # Hidden dimensions for the decoder MLP
@@ -34,9 +34,9 @@ model:
   gene_dim: 5060            
   embedding_dim: 3072     
   hidden_dims: [512, 512, 256] 
-  time_emb_dim: 1024
+  time_emb_dim: 128
   dropout: 0.1        
-  diffusion_steps: 1000       # Number of denoising steps
+  diffusion_steps: 1000      # Number of denoising steps
 
 dir:
   save_dir: "./results"

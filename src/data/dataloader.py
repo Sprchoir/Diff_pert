@@ -21,20 +21,21 @@ def get_dataloader_decoder(configs, split):
     if split == "train":
         # Get data from diffusion model
         gen_times = configs["decoder"]["gen_times"]
-        # Y_low_gen, Y_full, Y_low_real = get_data_decoder(gen_times, configs, split="train")
-        # np.savez(os.path.join(pred_dir, "Train_data_decoder.npz"), Y_low_gen=Y_low_gen, Y_full=Y_full, Y_low_real=Y_low_real)
+        # Y_low_gen, Y_full, Y_low_real, embeddings = get_data_decoder(gen_times, configs, split="train")
+        # np.savez(os.path.join(pred_dir, "Train_data_decoder.npz"), Y_low_gen=Y_low_gen, Y_full=Y_full, Y_low_real=Y_low_real, embeddings=embeddings)
         data = np.load(os.path.join(pred_dir, "Train_data_decoder.npz"))
         Y_low_gen = data["Y_low_gen"]
         Y_full = data["Y_full"]
         Y_low_real = data["Y_low_real"]
-        train_dataset = DecoderDataset(configs, Y_low_gen, Y_full, Y_low_real, split)
-        val_dataset = DecoderDataset(configs, Y_low_gen, Y_full, Y_low_real, "val")
+        embeddings = data["embeddings"]
+        train_dataset = DecoderDataset(configs, Y_low_gen, Y_full, embeddings, Y_low_real, split)
+        val_dataset = DecoderDataset(configs, Y_low_gen, Y_full, embeddings, Y_low_real, "val")
         # DataLoader
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, drop_last=True)
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=True)
         return train_dataloader, val_dataloader
     else:
-        Y_low_gen, Y_full = get_data_decoder(gen_times=1, configs=configs, split="test")
-        test_dataset = DecoderDataset(configs, Y_low_gen, Y_full, split="test")
-        test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=False)
+        Y_low_gen, Y_full, embeddings = get_data_decoder(gen_times=1, configs=configs, split="test")
+        test_dataset = DecoderDataset(configs, Y_low_gen, Y_full, embeddings, split="test")
+        test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=True)
         return test_dataloader

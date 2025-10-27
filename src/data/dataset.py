@@ -11,9 +11,11 @@ class DiffDataset(Dataset):
         self.split = split
         X, Y = Load_data(configs)
         self.X, self.Y = self._split(X, Y)
+        self.X_ori = self.X.copy()
+        self.Y_ori = self.Y.copy()       
         self.Preprocessing(configs)
         if split == "test":
-          self.save_ori()
+            self.save_ori() 
     
     def __len__(self):
         return len(self.Y)
@@ -22,18 +24,10 @@ class DiffDataset(Dataset):
         return self.X[idx,:], self.Y[idx,:], self.embeddings[idx,:]
     
     def Preprocessing(self, configs):
-        if self.split == "test":
-          self.X_ori = self.X.copy()
-          self.Y_ori = self.Y.copy()
-        
-        # Target for the decoder: log1p data
-        self.Y_full = self.Y.copy()
-        sc.pp.log1p(self.Y_full)
-    
         # Preprocessing and PCA through Scanpy
         self.sc_process()
 
-        # Obtain the perturbation labels
+        # Obtain the gene embeddings as perturbation labels
         self.Y.obs["perturbation"] = self.Y.obs["condition_name"].apply(self.extract_gene_name)
         # print("Unique perturbations:", adata.obs["perturbation"].unique()) # 86 kinds
         pickle_path = configs["data"]["embedding_path"]
@@ -62,6 +56,7 @@ class DiffDataset(Dataset):
         return condition_name 
     
     def save_ori(self):
+        # Save the original data 
         X_ori = self.X_ori[:, self.hvg_genes]
         Y_ori = self.Y_ori[:, self.hvg_genes]
         X_ori = X_ori.X.toarray() if hasattr(X_ori.X, "toarray") else X_ori.X
@@ -73,25 +68,15 @@ class DiffDataset(Dataset):
         )
 
     def sc_process(self):
-        """
-        Preprocess self.X and self.Y through Scanpy:
-        Normalization + Log-transform + HVG filter + PCA
-        To better capture the differences between different cell types, we fit PCA independently on train/val/test set.
-        And a semi-supervised decoder will be used to map the PC data embeddings back to the original space.
-        """
+        # Preprocess self.X and self.Y through Scanpy: Normalization + Log-transform + HVG filter + PCA
+        # To better capture the effects of different cell lines and other factors, we fit PCA independently on train/val/test set.
         save_dir = self.configs["dir"]["pred_dir"]
         stats_file = os.path.join(save_dir, f"stats.pkl")
         n_comps = self.configs["data"]["num_pc"]
         norm_sum = self.configs["data"]["norm_sum"]
-        # Scanpy Preprocessing for training set
-        self.X.obs["lib_size_raw"] = self.X.X.sum(axis=1).A1 if hasattr(self.X.X, "A1") else self.X.X.sum(axis=1)
-        self.Y.obs["lib_size_raw"] = self.Y.X.sum(axis=1).A1 if hasattr(self.Y.X, "A1") else self.Y.X.sum(axis=1)
-        for data in [self.X, self.Y]:
-            sc.pp.normalize_total(data, target_sum=norm_sum)
-            sc.pp.log1p(data)
+        gen_times = self.configs["decoder"]["gen_times"]
+        
         # HVG selection 
-        # If for different cells or genes, we need to independent select HVG as well.
-        # And use the Gene embedding to better represent the cell-gene expression.
         if self.split == "train":
             sc.pp.highly_variable_genes(self.X, n_top_genes=self.configs["data"]["num_HVG"], subset=True, flavor="seurat")
             self.hvg_genes = self.X.var_names[self.X.var["highly_variable"]].to_numpy()
@@ -99,24 +84,27 @@ class DiffDataset(Dataset):
             self.hvg_genes = joblib.load(stats_file)["hvg_genes"]
         self.X = self.X[:, self.hvg_genes]
         self.Y = self.Y[:, self.hvg_genes]
-        self.Y_full = self.Y_full[:, self.hvg_genes]
+        lib_size_raw = self.X.X.sum(axis=1).A1 if hasattr(self.X.X, "A1") else self.X.X.sum(axis=1)
+
+        # Normalization and Log-transform
+        for data in [self.X, self.Y]:
+            X_mat = data.X.toarray() if hasattr(data.X, "toarray") else np.array(data.X)
+            X_mat = X_mat / lib_size_raw * norm_sum
+            data.X = X_mat
+            sc.pp.log1p(data)
+        self.Y_full = self.Y.copy()
         self.Y_full = self.Y_full.X.toarray() if hasattr(self.Y_full.X, "toarray") else self.Y_full.X
-        # Scale
-        # for data in [self.X, self.Y]:
-        #     sc.pp.scale(data, max_value=10)
-        # PCA
+
+        # Top PCs of X and Y
         if self.configs["data"]["pca"]:
             sc.tl.pca(self.X, n_comps=n_comps, svd_solver="arpack")
             sc.tl.pca(self.Y, n_comps=n_comps, svd_solver="arpack")
 
-        # Save the Statistics for the inversion
+        # Save the Statistics for the inversion process
+        if self.split == "generate":
+            lib_size_raw = lib_size_raw.repeat(gen_times + 1, axis=0)   # Match the lib_size for all generated data
         stats = {
-            "lib_size_raw_X": self.X.obs["lib_size_raw"].to_numpy(),
-            "lib_size_raw_Y": self.Y.obs["lib_size_raw"].to_numpy(),
-            "mean_X": self.X.var["mean"].to_numpy() if "mean" in self.X.var else None,
-            "std_X": self.X.var["std"].to_numpy() if "std" in self.X.var else None,
-            "mean_Y": self.Y.var["mean"].to_numpy() if "mean" in self.Y.var else None,
-            "std_Y": self.Y.var["std"].to_numpy() if "std" in self.Y.var else None,
+            "lib_size_raw": lib_size_raw,
             "hvg_genes": self.hvg_genes,
             "norm_sum": norm_sum,
         }
